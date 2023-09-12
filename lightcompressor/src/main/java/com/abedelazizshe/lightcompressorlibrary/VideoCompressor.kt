@@ -8,9 +8,11 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import androidx.annotation.RequiresApi
 import com.abedelazizshe.lightcompressorlibrary.compressor.Compressor.compressVideo
 import com.abedelazizshe.lightcompressorlibrary.compressor.Compressor.isRunning
+import com.abedelazizshe.lightcompressorlibrary.compressor.Compressor.mapOfRunning
 import com.abedelazizshe.lightcompressorlibrary.config.*
 import com.abedelazizshe.lightcompressorlibrary.video.Result
 import kotlinx.coroutines.*
@@ -27,6 +29,8 @@ enum class VideoQuality {
 object VideoCompressor : CoroutineScope by MainScope() {
 
     private var job: Job? = null
+
+    private val mapOfJobs = mutableMapOf<String, Job>()
 
     /**
      * This function compresses a given list of [uris] of video files and writes the compressed
@@ -87,13 +91,46 @@ object VideoCompressor : CoroutineScope by MainScope() {
         )
     }
 
+    @JvmStatic
+    @JvmOverloads
+    fun start(
+        context: Context,
+        dispatchers: CoroutineDispatcher,
+        uris: Map<String, Uri>,
+        isStreamable: Boolean = false,
+        sharedStorageConfiguration: SharedStorageConfiguration? = null,
+        appSpecificStorageConfiguration: AppSpecificStorageConfiguration? = null,
+        configureWith: Configuration,
+        listener: CompressionListener,
+    ) {
+        // Only one is allowed
+        assert(sharedStorageConfiguration == null || appSpecificStorageConfiguration == null)
+        assert(configureWith.videoNames.size == uris.size)
+
+        doVideoCompression(
+            context,
+            dispatchers,
+            uris,
+            isStreamable,
+            sharedStorageConfiguration,
+            appSpecificStorageConfiguration,
+            configureWith,
+            listener,
+        )
+    }
+
     /**
      * Call this function to cancel video compression process which will call [CompressionListener.onCancelled]
      */
     @JvmStatic
-    fun cancel() {
-        job?.cancel()
-        isRunning = false
+    fun cancel(key: String? = null) {
+        if (key.isNullOrEmpty()) {
+            job?.cancel()
+            isRunning = false
+        } else {
+            mapOfJobs[key]?.cancel()
+            mapOfRunning[key] = false
+        }
     }
 
     private fun doVideoCompression(
@@ -105,6 +142,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
         configuration: Configuration,
         listener: CompressionListener,
     ) {
+        val key = ""
         var streamableFile: File? = null
         for (i in uris.indices) {
 
@@ -136,9 +174,11 @@ object VideoCompressor : CoroutineScope by MainScope() {
 
                 desFile?.let {
                     isRunning = true
-                    listener.onStart(i)
+                    listener.onStart(i, key)
                     val result = startCompression(
                         i,
+                        "",
+                        Dispatchers.Default,
                         context,
                         uris[i],
                         desFile.path,
@@ -159,38 +199,126 @@ object VideoCompressor : CoroutineScope by MainScope() {
                             shouldSave = true
                         )
 
-                        listener.onSuccess(i, result.size, result.path)
+                        listener.onSuccess(i, key, result.size, result.path)
                     } else {
-                        listener.onFailure(i, result.failureMessage ?: "An error has occurred!")
+                        listener.onFailure(i, key, result.failureMessage ?: "An error has occurred!")
                     }
                 }
             }
         }
     }
 
+    private fun doVideoCompression(
+        context: Context,
+        dispatchers: CoroutineDispatcher,
+        uris: Map<String, Uri>,
+        isStreamable: Boolean,
+        sharedStorageConfiguration: SharedStorageConfiguration?,
+        appSpecificStorageConfiguration: AppSpecificStorageConfiguration?,
+        configuration: Configuration,
+        listener: CompressionListener,
+    ) {
+        var streamableFile: File? = null
+        var i = 0
+        for ((k, v) in uris) {
+            mapOfJobs[k] = launch {
+                val job = async { getMediaPath(context, v) }
+                val path = job.await()
+
+                val desFile = saveVideoFile(
+                    context,
+                    path,
+                    sharedStorageConfiguration,
+                    appSpecificStorageConfiguration,
+                    isStreamable,
+                    configuration.videoNames[i],
+                    shouldSave = false
+                )
+
+                if (isStreamable)
+                    streamableFile = saveVideoFile(
+                        context,
+                        path,
+                        sharedStorageConfiguration,
+                        appSpecificStorageConfiguration,
+                        null,
+                        configuration.videoNames[i],
+                        shouldSave = false
+                    )
+
+                desFile?.let {
+                    mapOfRunning[k] = true
+                    listener.onStart(i, k)
+                    val result = startCompression(
+                        -1,
+                        k,
+                        dispatchers,
+                        context,
+                        v,
+                        desFile.path,
+                        streamableFile?.path,
+                        configuration,
+                        listener,
+                    )
+
+                    // Runs in Main(UI) Thread
+                    if (result.success) {
+                        saveVideoFile(
+                            context,
+                            result.path,
+                            sharedStorageConfiguration,
+                            appSpecificStorageConfiguration,
+                            isStreamable,
+                            configuration.videoNames[i],
+                            shouldSave = true
+                        )
+
+                        listener.onSuccess(i, k, result.size, result.path)
+                        mapOfJobs.remove(k)
+                        mapOfRunning.remove(k)
+                    } else {
+                        listener.onFailure(i, k, result.failureMessage ?: "An error has occurred!")
+                        mapOfJobs.remove(k)
+                        mapOfRunning.remove(k)
+                    }
+                }
+                i++
+            }
+        }
+    }
+
     private suspend fun startCompression(
         index: Int,
+        key: String,
+        dispatchers: CoroutineDispatcher,
         context: Context,
         srcUri: Uri,
         destPath: String,
         streamableFile: String? = null,
         configuration: Configuration,
         listener: CompressionListener,
-    ): Result = withContext(Dispatchers.Default) {
+    ): Result = withContext(dispatchers) {
         return@withContext compressVideo(
             index,
+            key,
+            dispatchers,
             context,
             srcUri,
             destPath,
             streamableFile,
             configuration,
             object : CompressionProgressListener {
-                override fun onProgressChanged(index: Int, percent: Float) {
-                    listener.onProgress(index, percent)
+                override fun onProgressChanged(index: Int, key: String, percent: Float) {
+                    listener.onProgress(index, key, percent)
                 }
 
-                override fun onProgressCancelled(index: Int) {
-                    listener.onCancelled(index)
+                override fun onProgressCancelled(index: Int, key: String) {
+                    listener.onCancelled(index, key)
+                    if (key.isNotEmpty()) {
+                        mapOfRunning.remove(key)
+                        mapOfJobs[key]?.cancel()
+                        mapOfJobs.remove(key)
+                    }
                 }
             },
         )

@@ -9,22 +9,23 @@ import androidx.annotation.WorkerThread
  */
 interface CompressionListener {
     @MainThread
-    fun onStart(index: Int)
+    fun onStart(index: Int, key: String)
 
     @MainThread
-    fun onSuccess(index: Int, size: Long, path: String?)
+    fun onSuccess(index: Int, key: String, size: Long, path: String?)
 
     @MainThread
-    fun onFailure(index: Int, failureMessage: String)
+    fun onFailure(index: Int, key: String, failureMessage: String)
 
     @WorkerThread
-    fun onProgress(index: Int, percent: Float)
+    fun onProgress(index: Int, key: String, percent: Float)
 
     @WorkerThread
-    fun onCancelled(index: Int)
+    fun onCancelled(index: Int, key: String)
 }
 
 interface CompressionProgressListener {
-    fun onProgressChanged(index: Int, percent: Float)
-    fun onProgressCancelled(index: Int)
+    fun onProgressChanged(index: Int, key: String, percent: Float)
+
+    fun onProgressCancelled(index: Int, key: String)
 }

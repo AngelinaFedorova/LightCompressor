@@ -18,6 +18,7 @@ import com.abedelazizshe.lightcompressorlibrary.utils.CompressorUtils.setOutputF
 import com.abedelazizshe.lightcompressorlibrary.utils.CompressorUtils.setUpMP4Movie
 import com.abedelazizshe.lightcompressorlibrary.utils.StreamableVideo
 import com.abedelazizshe.lightcompressorlibrary.video.*
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -42,16 +43,20 @@ object Compressor {
 
     var isRunning = true
 
+    val mapOfRunning = mutableMapOf<String, Boolean>()
+
+
     suspend fun compressVideo(
         index: Int,
+        key: String,
+        dispatchers: CoroutineDispatcher,
         context: Context,
         srcUri: Uri,
         destination: String,
         streamableFile: String?,
         configuration: Configuration,
         listener: CompressionProgressListener,
-    ): Result = withContext(Dispatchers.Default) {
-
+    ): Result = withContext(dispatchers) {
         val extractor = MediaExtractor()
         // Retrieve the source's metadata to be used as input to generate new values for compression
         val mediaMetadataRetriever = MediaMetadataRetriever()
@@ -62,6 +67,7 @@ object Compressor {
             printException(exception)
             return@withContext Result(
                 index,
+                key,
                 success = false,
                 failureMessage = "${exception.message}"
             )
@@ -89,6 +95,7 @@ object Compressor {
             // Exit execution
             return@withContext Result(
                 index,
+                key,
                 success = false,
                 failureMessage = "Failed to extract video meta-data, please try again"
             )
@@ -101,7 +108,7 @@ object Compressor {
         // Check for a min video bitrate before compression
         // Note: this is an experimental value
         if (configuration.isMinBitrateCheckEnabled && bitrate <= MIN_BITRATE)
-            return@withContext Result(index, success = false, failureMessage = INVALID_BITRATE)
+            return@withContext Result(index, key, success = false, failureMessage = INVALID_BITRATE)
 
         //Handle new bitrate value
         val newBitrate: Int =
@@ -133,6 +140,7 @@ object Compressor {
 
         return@withContext start(
             index,
+            key,
             newWidth!!,
             newHeight!!,
             destination,
@@ -149,6 +157,7 @@ object Compressor {
     @Suppress("DEPRECATION")
     private fun start(
         id: Int,
+        key: String,
         newWidth: Int,
         newHeight: Int,
         destination: String,
@@ -277,8 +286,8 @@ object Compressor {
                         var encoderOutputAvailable = true
 
                         loop@ while (decoderOutputAvailable || encoderOutputAvailable) {
-
-                            if (!isRunning) {
+                            val active = if (key.isEmpty()) isRunning else mapOfRunning[key] ?: false
+                            if (!active) {
                                 dispose(
                                     videoIndex,
                                     decoder,
@@ -287,10 +296,10 @@ object Compressor {
                                     outputSurface,
                                     extractor
                                 )
-
-                                compressionProgressListener.onProgressCancelled(id)
+                                compressionProgressListener.onProgressCancelled(id, key)
                                 return Result(
                                     id,
+                                    key,
                                     success = false,
                                     failureMessage = "The compression has stopped!"
                                 )
@@ -366,11 +375,12 @@ object Compressor {
                                             outputSurface.drawImage()
 
                                             inputSurface.setPresentationTime(bufferInfo.presentationTimeUs * 1000)
-
                                             compressionProgressListener.onProgressChanged(
                                                 id,
+                                                key,
                                                 bufferInfo.presentationTimeUs.toFloat() / duration.toFloat() * 100
                                             )
+
 
                                             inputSurface.swapBuffers()
                                         }
@@ -386,7 +396,7 @@ object Compressor {
 
                 } catch (exception: Exception) {
                     printException(exception)
-                    return Result(id, success = false, failureMessage = exception.message)
+                    return Result(id, key, success = false, failureMessage = exception.message)
                 }
 
                 dispose(
@@ -432,6 +442,7 @@ object Compressor {
             }
             return Result(
                 id,
+                key,
                 success = true,
                 failureMessage = null,
                 size = resultFile.length(),
@@ -441,6 +452,7 @@ object Compressor {
 
         return Result(
             id,
+            key,
             success = false,
             failureMessage = "Something went wrong, please try again"
         )
