@@ -58,6 +58,16 @@
         app:layout_constraintTop_toBottomOf="@+id/progressBar"
         tools:text="Size after compression" />
 
+    <Button
+        android:id="@+id/cancelBtn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:layout_constraintTop_toBottomOf="@id/newSize"
+        android:layout_marginTop="16dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:text="Cancel"/>
+
     <View
         android:id="@+id/divider"
         android:layout_width="match_parent"
@@ -67,6 +77,6 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/newSize" />
+        app:layout_constraintTop_toBottomOf="@+id/cancelBtn" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

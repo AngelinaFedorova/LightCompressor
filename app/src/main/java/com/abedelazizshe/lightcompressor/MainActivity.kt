@@ -25,7 +25,11 @@ import com.abedelazizshe.lightcompressorlibrary.VideoQuality
 import com.abedelazizshe.lightcompressorlibrary.config.Configuration
 import com.abedelazizshe.lightcompressorlibrary.config.SaveLocation
 import com.abedelazizshe.lightcompressorlibrary.config.SharedStorageConfiguration
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.FileInputStream
+import java.util.UUID
 
 /**
  * Created by AbedElaziz Shehadeh on 26 Jan, 2020
@@ -41,7 +45,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val uris = mutableListOf<Uri>()
-    private val data = mutableListOf<VideoDetailsModel>()
+    private val uris2 = mutableMapOf<String, Uri>()
+    private val withKeyProcess = true
     private lateinit var adapter: RecyclerViewAdapter
 
 
@@ -62,12 +67,20 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.cancel.setOnClickListener {
-            VideoCompressor.cancel()
+            if (!withKeyProcess) {
+                VideoCompressor.cancel()
+            } else {
+                adapter.list.forEach {
+                    VideoCompressor.cancel(it.key)
+                }
+            }
         }
 
         val recyclerview = findViewById<RecyclerView>(R.id.recyclerview)
         recyclerview.layoutManager = LinearLayoutManager(this)
-        adapter = RecyclerViewAdapter(applicationContext, data)
+        adapter = RecyclerViewAdapter(applicationContext, mutableListOf()) {
+            if (withKeyProcess) VideoCompressor.cancel(it)
+        }
         recyclerview.adapter = adapter
     }
 
@@ -107,25 +120,64 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handleResult(data: Intent?) {
+        val rootDir = this.applicationContext.filesDir.path
+        val dir = "$rootDir/localFiles"
+        createDirectory(dir)
         val clipData: ClipData? = data?.clipData
         if (clipData != null) {
             for (i in 0 until clipData.itemCount) {
-                val videoItem = clipData.getItemAt(i)
-                uris.add(videoItem.uri)
+                if (withKeyProcess) {
+                    val videoItem = clipData.getItemAt(i)
+                    val fileName = File(videoItem.uri.path).name
+                    val to = "$dir/$fileName"
+                    copyMedia(videoItem.uri.toString(), to)
+                    val key = UUID.randomUUID().toString()
+                    uris2[key] = Uri.fromFile(File(to))
+                } else {
+                    val videoItem = clipData.getItemAt(i)
+                    uris.add(videoItem.uri)
+                }
             }
             processVideo()
         } else if (data != null && data.data != null) {
             val uri = data.data
-            uris.add(uri!!)
+            if (withKeyProcess) {
+                if (uri != null) {
+                    val fileName = File(uri.path).name
+                    val to = "$dir/$fileName"
+                    copyMedia(uri.toString(), to)
+                    val key = UUID.randomUUID().toString()
+                    uris2[key] = Uri.fromFile(File(to))
+                }
+            } else {
+                uris.add(uri!!)
+            }
             processVideo()
+        }
+    }
+
+    private fun createDirectory(url: String) {
+        if (!File(url).exists()) {
+            File(url).mkdirs()
+        }
+    }
+
+    private fun copyMedia(from: String, to: String) {
+        val readOnlyMode = "r"
+        val fromUri = Uri.parse(from)
+        this.contentResolver.openFileDescriptor(fromUri, readOnlyMode).use { pfd ->
+            FileInputStream(pfd?.fileDescriptor).copyTo(File(to).outputStream())
         }
     }
 
     private fun reset() {
         uris.clear()
-        binding.mainContents.visibility = View.GONE
-        data.clear()
-        adapter.notifyDataSetChanged()
+        uris2.clear()
+        if (!withKeyProcess) {
+            binding.mainContents.visibility = View.GONE
+            adapter.list.clear()
+            adapter.notifyDataSetChanged()
+        }
     }
 
     private fun setReadStoragePermission() {
@@ -174,66 +226,130 @@ class MainActivity : AppCompatActivity() {
     private fun processVideo() {
         binding.mainContents.visibility = View.VISIBLE
 
+        val videoNames = if (withKeyProcess) {
+            uris2.map { entry -> entry.value.pathSegments.last()}
+        } else {
+            uris.map { uri -> uri.pathSegments.last() }
+        }
+        val configureWith = Configuration(
+            quality = VideoQuality.LOW,
+            videoNames = videoNames,
+            isMinBitrateCheckEnabled = true,
+        )
+        val sharedStorageConfiguration = SharedStorageConfiguration(
+            saveAt = SaveLocation.movies,
+            subFolderName = "my-demo-videos"
+        )
+        val listener = object : CompressionListener {
+            override fun onProgress(index: Int, key: String, percent: Float) {
+                //Update UI
+                if (percent <= 100)
+                    runOnUiThread {
+                        if (withKeyProcess) {
+                            val newIndex = adapter.list.indexOfFirst { it.key == key }
+                            val uri = uris2[key]
+                            adapter.list[newIndex] = VideoDetailsModel(
+                                key,
+                                "",
+                                uri,
+                                "",
+                                percent
+                            )
+                            adapter.notifyItemChanged(newIndex)
+                        } else {
+                            adapter.list[index] = VideoDetailsModel(
+                                "",
+                                "",
+                                uris[index],
+                                "",
+                                percent
+                            )
+                            adapter.notifyDataSetChanged()
+                        }
+                    }
+            }
+
+            override fun onStart(index: Int, key: String) {
+                if (withKeyProcess) {
+                    val notifyAll = adapter.list.size == 0
+                    val hasItem = adapter.list.indexOfFirst { it.key == key } > -1
+                    if (!hasItem) {
+                        val newIndex = adapter.list.lastIndex + 1
+                        val uri = uris2[key]
+                        adapter.list.add(
+                            newIndex,
+                            VideoDetailsModel(key, "", uri, "")
+                        )
+                        if (notifyAll) {
+                            adapter.notifyDataSetChanged()
+                        } else {
+                            adapter.notifyItemInserted(newIndex)
+                        }
+                    }
+                } else {
+                    adapter.list.add(
+                        index,
+                        VideoDetailsModel("", "", uris[index], "")
+                    )
+                    adapter.notifyDataSetChanged()
+                }
+            }
+
+            override fun onSuccess(index: Int, key: String, size: Long, path: String?) {
+                if (withKeyProcess) {
+                    val newIndex = adapter.list.indexOfFirst { it.key == key }
+                    val uri = uris2[key]
+                    adapter.list[newIndex] = VideoDetailsModel(
+                        key,
+                        path,
+                        uri,
+                        getFileSize(size),
+                        100F
+                    )
+                    adapter.notifyItemChanged(newIndex)
+                } else {
+                    adapter.list[index] = VideoDetailsModel(
+                        "",
+                        path,
+                        uris[index],
+                        getFileSize(size),
+                        100F
+                    )
+                    adapter.notifyDataSetChanged()
+                }
+            }
+
+            override fun onFailure(index: Int, key: String, failureMessage: String) {
+                Log.wtf("failureMessage", failureMessage)
+            }
+
+            override fun onCancelled(index: Int, key: String) {
+                Log.wtf("TAG", "compression has been cancelled")
+                // make UI changes, cleanup, etc
+            }
+        }
         lifecycleScope.launch {
-            VideoCompressor.start(
-                context = applicationContext,
-                uris,
-                isStreamable = false,
-                sharedStorageConfiguration = SharedStorageConfiguration(
-                    saveAt = SaveLocation.movies,
-                    subFolderName = "my-demo-videos"
-                ),
-//                appSpecificStorageConfiguration = AppSpecificStorageConfiguration(
-//
-//                ),
-                configureWith = Configuration(
-                    quality = VideoQuality.LOW,
-                    videoNames = uris.map { uri -> uri.pathSegments.last() },
-                    isMinBitrateCheckEnabled = true,
-                ),
-                listener = object : CompressionListener {
-                    override fun onProgress(index: Int, percent: Float) {
-                        //Update UI
-                        if (percent <= 100)
-                            runOnUiThread {
-                                data[index] = VideoDetailsModel(
-                                    "",
-                                    uris[index],
-                                    "",
-                                    percent
-                                )
-                                adapter.notifyDataSetChanged()
-                            }
-                    }
+            if (withKeyProcess) {
 
-                    override fun onStart(index: Int) {
-                        data.add(
-                            index,
-                            VideoDetailsModel("", uris[index], "")
-                        )
-                        adapter.notifyDataSetChanged()
-                    }
-
-                    override fun onSuccess(index: Int, size: Long, path: String?) {
-                        data[index] = VideoDetailsModel(
-                            path,
-                            uris[index],
-                            getFileSize(size),
-                            100F
-                        )
-                        adapter.notifyDataSetChanged()
-                    }
-
-                    override fun onFailure(index: Int, failureMessage: String) {
-                        Log.wtf("failureMessage", failureMessage)
-                    }
-
-                    override fun onCancelled(index: Int) {
-                        Log.wtf("TAG", "compression has been cancelled")
-                        // make UI changes, cleanup, etc
-                    }
-                },
-            )
+                VideoCompressor.start(
+                    applicationContext,
+                    Dispatchers.IO,
+                    uris2,
+                    isStreamable = false,
+                    sharedStorageConfiguration = sharedStorageConfiguration,
+                    configureWith = configureWith,
+                    listener = listener,
+                    )
+            } else {
+                VideoCompressor.start(
+                    context = applicationContext,
+                    uris,
+                    isStreamable = false,
+                    sharedStorageConfiguration = sharedStorageConfiguration,
+                    configureWith = configureWith,
+                    listener = listener,
+                )
+            }
         }
     }
 }
