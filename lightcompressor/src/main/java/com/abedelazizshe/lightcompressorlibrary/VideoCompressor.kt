@@ -146,7 +146,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
         var streamableFile: File? = null
         for (i in uris.indices) {
 
-            job = launch {
+            job = launch(Dispatchers.IO) {
 
                 val job = async { getMediaPath(context, uris[i]) }
                 val path = job.await()
@@ -189,7 +189,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
 
                     // Runs in Main(UI) Thread
                     if (result.success) {
-                        saveVideoFile(
+                        val savedFile = saveVideoFile(
                             context,
                             result.path,
                             sharedStorageConfiguration,
@@ -198,8 +198,7 @@ object VideoCompressor : CoroutineScope by MainScope() {
                             configuration.videoNames[i],
                             shouldSave = true
                         )
-
-                        listener.onSuccess(i, key, result.size, result.path)
+                        listener.onSuccess(i, key, result.size, savedFile?.path)
                     } else {
                         listener.onFailure(i, key, result.failureMessage ?: "An error has occurred!")
                     }
@@ -363,6 +362,8 @@ object VideoCompressor : CoroutineScope by MainScope() {
                         else saveLocation
                     if (shouldSave == true) {
                         saveVideoInExternal(context, videoFileName, fullPath, videoFile)
+                        File(context.filesDir, videoFileName).delete()
+                        return File("/storage/emulated/0/${fullPath}", videoFileName)
                     }
                     return File(context.filesDir, videoFileName)
                 } else {

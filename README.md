@@ -18,7 +18,9 @@ I would like to mention that the set attributes for size and quality worked just
 
 ## What's new in 1.3.2
 
-- **Breaking** Added multiple compression function by keys
+- Bugs fixes.
+- Thanks to [vitorpamplona](https://github.com/vitorpamplona), Fixes a crash when the user tries a video with malformed bitrate information
+- Thanks to [amrreda1995](https://github.com/amrreda1995) for Force compressing code to run in IO thread
 
 
 ## How it works
@@ -217,7 +219,7 @@ from within the main thread. Have a look at the example code above for more info
 To report an issue, please specify the following:
 - Device name
 - Android version
-- If the bug/issue exists on the sample app (version 1.3.2) of the library that could be downloaded at this [link](https://drive.google.com/file/d/1deImkOzB6cNVb6NoRXLcNw-kIMqEEmFB/view?usp=sharing).
+- If the bug/issue exists on the sample app (version 1.3.2) of the library that could be downloaded at this [link](https://drive.google.com/file/d/1rflQ_elXn7uSbL_qBiruwJmPwZXjIyie/view?usp=sharing).
 
 ## Compatibility
 Minimum Android SDK: LightCompressor requires a minimum API level of 24.
@@ -247,7 +249,7 @@ Include this in your Module-level build.gradle file:
 ### Groovy
 
 ```groovy
-implementation 'com.github.AbedElazizShe:LightCompressor:1.3.1'
+implementation 'com.github.AbedElazizShe:LightCompressor:1.3.2'
 ```
 
 If you're facing problems with the setup, edit settings.gradle by adding this at the beginning of the file:
